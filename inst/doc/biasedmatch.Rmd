@@ -1,0 +1,178 @@
+---
+title: "Biased matching in two-urn sampling problems"
+author: "Borek Puza and Andre Bonfrer"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Biased matching in two-urn sampling problems}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4
+)
+```
+
+```{r setup}
+library(BiasedMatch)
+```
+
+## The problem
+
+`BiasedMatch` implements the two-urn biased sampling model of Puza and
+Bonfrer (2018). Urn 1 contains `N1` distinct items and urn 2 contains `N2`
+distinct items, with `N` items common to both urns. A sample of size `m1` is
+drawn without replacement from urn 1 and a sample of size `m2` from urn 2. Each
+item common to both urns is given a selection weight `w`, while every other
+item has weight 1, so `w > 1` makes common items more likely to be selected.
+The quantity of interest is `m`, the number of items selected in **both**
+samples (the number of *matches*).
+
+The model has several natural readings: two retailers independently choosing
+overlapping products to promote, two committees drawn from a shared population
+of candidates, or classic capture-recapture sampling. In each case the number
+of matches, and any bias toward the common items, is what we want to
+understand.
+
+## The distribution of the number of matches
+
+`PROBM()` returns the probability of a specific number of matches, and
+`DISTM()` returns the full distribution together with its mean and variance.
+When `w = 1` the model reduces to unbiased simple random sampling without
+replacement (a mixture of hypergeometrics, Theorem 1 of the paper); when
+`w > 1` it uses the univariate and bivariate Wallenius' non-central
+hypergeometric distributions (Theorem 2).
+
+The example below reproduces Table 1 of the paper, contrasting `w = 1` with
+`w = 2` for `N1 = 37`, `N2 = 45`, `N = 16`, `m1 = 12`, `m2 = 8`.
+
+```{r table1}
+d1 <- DISTM(N1 = 37, N2 = 45, N = 16, m1 = 12, m2 = 8, w = 1)
+d2 <- DISTM(N1 = 37, N2 = 45, N = 16, m1 = 12, m2 = 8, w = 2)
+
+round(
+  data.frame(
+    m = d1$mvec,
+    `w = 1` = d1$fmvec,
+    `w = 2` = d2$fmvec,
+    check.names = FALSE
+  ),
+  4
+)
+```
+
+Raising `w` from 1 to 2 shifts the distribution of matches upward: the mean
+rises from `r round(d1$Em, 4)` to `r round(d2$Em, 4)`, and the mode moves from
+1 to 2.
+
+```{r pmf-plot}
+plot(d1$mvec, d1$fmvec,
+  type = "b", pch = 16, ylim = c(0, 0.45),
+  xlab = "Number of matches (m)", ylab = "Probability"
+)
+lines(d2$mvec, d2$fmvec, type = "b", pch = 17, lty = 2)
+legend("topright", c("w = 1", "w = 2"), pch = c(16, 17), lty = c(1, 2), bty = "n")
+```
+
+For the unbiased case `w = 1`, `Vmf()` provides the closed-form variance of
+Theorem 1(b), which agrees with the exact variance from `DISTM()`:
+
+```{r vmf}
+c(closed_form = Vmf(N1 = 37, N2 = 45, N = 16, m1 = 12, m2 = 8), exact = d1$Vm)
+```
+
+## Inference on the bias parameter
+
+The inferential problem "inverts" the model: given the fixed urn constants and
+a single observed number of matches `m`, what can we say about the bias `w`?
+`inferW()` returns the maximum likelihood estimate, the posterior mode under
+the Jeffreys-type prior `f(w)` proportional to `1 / w`, and a p-value for
+testing `w = 1` (no bias) against `w > 1`. `likW()` returns the standardised
+likelihood and posterior curves for plotting.
+
+### Marketing application (Problem 3)
+
+Masked promotion data from two competing electronics retailers give
+`N1 = 292`, `N2 = 350`, `N = 192`, `m1 = 90`, `m2 = 59`, with `m = 13`
+matching promotions observed.
+
+```{r problem3}
+fit <- inferW(m = 13, N1 = 292, N2 = 350, N = 192, m1 = 90, m2 = 59)
+fit
+```
+
+```{r problem3-curve}
+curves <- likW(
+  m = 13, N1 = 292, N2 = 350, N = 192, m1 = 90, m2 = 59,
+  wgrid = seq(0.05, 8, by = 0.05)
+)
+plot(curves$w, curves$likelihood,
+  type = "l",
+  xlab = "w", ylab = "standardised value"
+)
+lines(curves$w, curves$posterior, lty = 2)
+abline(v = c(fit$mle, fit$posterior_mode), col = "grey50", lty = 3)
+legend("topright", c("likelihood", "posterior kernel"), lty = c(1, 2), bty = "n")
+```
+
+The MLE is about `r round(fit$mle, 2)` and the posterior mode about
+`r round(fit$posterior_mode, 2)`, but the p-value of `r round(fit$p_value, 3)`
+gives only weak evidence against `w = 1`. At the 5% level we would not conclude
+that common items are preferentially selected for promotion.
+
+### Committee gender bias (Problem 2)
+
+Two committees of sizes `C = 9` and `K = 6` are drawn from a common population
+of `M = 22` men and `W = 30` women; we observe `B = 2` men on both committees.
+This maps onto the two-urn model with `N1 = N2 = M + W = 52`, `N = M = 22`,
+`m1 = C`, `m2 = K`, and `w` measuring bias toward selecting men.
+
+```{r problem2}
+inferW(m = 2, N1 = 52, N2 = 52, N = 22, m1 = 9, m2 = 6)
+```
+
+Sweeping over every possible value of `B` reproduces Table 2 of the paper.
+Note that once `B` is large enough the likelihood is strictly increasing and
+the MLE becomes infinite, while the posterior mode stays finite.
+
+```{r problem2-table}
+B_values <- 0:6
+tab <- do.call(rbind, lapply(B_values, function(B) {
+  r <- inferW(m = B, N1 = 52, N2 = 52, N = 22, m1 = 9, m2 = 6)
+  data.frame(B = B, MLE = r$mle, posterior_mode = r$posterior_mode, p_value = r$p_value)
+}))
+round(tab, 4)
+```
+
+## Hierarchical inference with MCMC
+
+When several matching experiments are available, the weight can be treated
+hierarchically and estimated by the Metropolis-Hastings samplers `MHALG()`
+(single shared weight), `RMMHALG()` (weight depends on covariates) and
+`SMRMMHALG()` (weights shared within covariate-defined classes). `restable()`
+summarises the draws and `estprop()` reports serial-correlation and
+convergence diagnostics. Use many more iterations than shown here for real
+inference.
+
+```{r mcmc, eval = FALSE}
+set.seed(4172)
+res <- MHALG(
+  B = 500, J = 5000,
+  N1vec = 37, N2vec = 45, N0vec = 16,
+  M1vec = 12, M2vec = 8, mvec = 3,
+  Cvec = 1, del = 0.1
+)
+restable(res, Bn = 500)
+estprop(res, Bn = 500, Jn = 4000)
+```
+
+## Reference
+
+Puza, B. and Bonfrer, A. (2018). A series of two-urn biased sampling problems.
+*Communications in Statistics - Theory and Methods*, 47(1), 80-91.
+<https://doi.org/10.1080/03610926.2017.1300282>
